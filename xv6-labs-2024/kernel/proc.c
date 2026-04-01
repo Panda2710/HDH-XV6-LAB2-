@@ -693,3 +693,19 @@ procdump(void)
     printf("\n");
   }
 }
+
+// Parses running processes from ptable into a new table
+uint64 parse_running_processes(struct proc *rpTable) {
+  uint64 count = 0;
+  for (int i = 0; i < NPROC; i++) {
+    acquire(&wait_lock);    // to access parent
+    acquire(&proc[i].lock); // to access PID and state
+    if (&proc[i].state != UNUSED) {
+      rpTable[i] = proc[i];
+      count++;
+    }
+    release(&proc[i].lock);
+    release(&wait_lock);
+  }
+  return count;
+}

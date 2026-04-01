@@ -1,4 +1,6 @@
+#include "kernel/ptree.h"
 struct stat;
+struct ptreeinfo;
 
 // system calls
 int fork(void);
@@ -22,6 +24,7 @@ int getpid(void);
 char* sbrk(int);
 int sleep(int);
 int uptime(void);
+int ptree(struct ptreeinfo*, int max);
 
 // ulib.c
 int stat(const char*, struct stat*);

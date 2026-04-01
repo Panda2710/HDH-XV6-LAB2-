@@ -693,3 +693,27 @@ procdump(void)
     printf("\n");
   }
 }
+
+uint64 getnproc(void)
+{
+  struct proc *p;
+  uint64 active_processes = 0;
+
+  // Duyet qua mang toan cuc proc chua tat ca cac tien trinh
+  for(p = proc; p < &proc[NPROC]; p++){
+    
+    // Dung acquire moi lan truy cap de khoa, dam bao tinh an toan du lieu
+    acquire(&p->lock); 
+    
+    // Dem so tien trinh dang hoat dong (neu khong o trang thai UNUSED thi tang so count len)
+    if(p->state != UNUSED) {
+      active_processes++;
+    }
+    
+    // Release sau khi acquire
+    release(&p->lock); 
+  }
+
+  // Tra ve so tien trinh dang hoat dong
+  return active_processes; 
+}

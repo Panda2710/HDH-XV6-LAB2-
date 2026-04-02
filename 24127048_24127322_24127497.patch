@@ -1,0 +1,536 @@
+diff --git a/xv6-labs-2024/Makefile b/xv6-labs-2024/Makefile
+index 74e454f..3777210 100644
+--- a/xv6-labs-2024/Makefile
++++ b/xv6-labs-2024/Makefile
+@@ -1,7 +1,4 @@
+ 
+-# To compile and run with a lab solution, set the lab name in conf/lab.mk
+-# (e.g., LAB=util).  Run make grade to test solution with the lab's
+-# grade script (e.g., grade-lab-util).
+ 
+ -include conf/lab.mk
+ 
+@@ -194,7 +191,9 @@ UPROGS=\
+ 	$U/_grind\
+ 	$U/_wc\
+ 	$U/_zombie\
+-
++	$U/_pstree\
++	$U/_trace\
++	$U/_sysinfotest\
+ 
+ 
+ 
+diff --git a/xv6-labs-2024/kernel/defs.h b/xv6-labs-2024/kernel/defs.h
+index d1b6bb9..1a86951 100644
+--- a/xv6-labs-2024/kernel/defs.h
++++ b/xv6-labs-2024/kernel/defs.h
+@@ -8,6 +8,7 @@ struct spinlock;
+ struct sleeplock;
+ struct stat;
+ struct superblock;
++struct ptreeinfo;
+ 
+ // bio.c
+ void            binit(void);
+@@ -106,6 +107,7 @@ void            yield(void);
+ int             either_copyout(int user_dst, uint64 dst, void *src, uint64 len);
+ int             either_copyin(void *dst, int user_src, uint64 src, uint64 len);
+ void            procdump(void);
++uint64          parse_running_processes(struct ptreeinfo *, int max);
+ 
+ // swtch.S
+ void            swtch(struct context*, struct context*);
+@@ -187,3 +189,8 @@ void            virtio_disk_intr(void);
+ 
+ // number of elements in fixed-size array
+ #define NELEM(x) (sizeof(x)/sizeof((x)[0]))
++#define NELEM(x) (sizeof(x)/sizeof((x)[0]))
++
++//sysinfo
++uint64          getfreemem(void);
++uint64          getnproc(void);
+diff --git a/xv6-labs-2024/kernel/kalloc.c b/xv6-labs-2024/kernel/kalloc.c
+index 0699e7e..e14ef6b 100644
+--- a/xv6-labs-2024/kernel/kalloc.c
++++ b/xv6-labs-2024/kernel/kalloc.c
+@@ -80,3 +80,25 @@ kalloc(void)
+     memset((char*)r, 5, PGSIZE); // fill with junk
+   return (void*)r;
+ }
++
++uint64 getfreemem(void)
++{
++  struct run *r;
++  uint64 free_bytes = 0;
++
++  acquire(&kmem.lock); // Dung ham acquire() de lay Spinlock (khoa)
++  // Ngan cac CPU khac thay doi danh sach kmem.freelist trong khi ta dang doc no
++
++  r = kmem.freelist;
++  
++  // Duyyet qua linked list cac trang trong
++  while(r){
++    free_bytes += PGSIZE; // PGSIZE la dinh nghia kthuoc cua 1 trang
++    r = r->next;
++  }
++  
++  // Release de mo khoa spinlock sau khi doc xong du lieu
++  release(&kmem.lock); 
++
++  return free_bytes; 
++}
+\ No newline at end of file
+diff --git a/xv6-labs-2024/kernel/proc.c b/xv6-labs-2024/kernel/proc.c
+index 130d9ce..61073e1 100644
+--- a/xv6-labs-2024/kernel/proc.c
++++ b/xv6-labs-2024/kernel/proc.c
+@@ -5,6 +5,7 @@
+ #include "spinlock.h"
+ #include "proc.h"
+ #include "defs.h"
++#include "ptree.h"
+ 
+ struct cpu cpus[NCPU];
+ 
+@@ -320,6 +321,7 @@ fork(void)
+ 
+   acquire(&np->lock);
+   np->state = RUNNABLE;
++  np->mask = p->mask;
+   release(&np->lock);
+ 
+   return pid;
+@@ -693,3 +695,49 @@ procdump(void)
+     printf("\n");
+   }
+ }
++
++// Parses running processes from ptable into a new table
++uint64 parse_running_processes(struct ptreeinfo *rpTable, int max) {
++  uint64 count = 0;
++  for (int i = 0; i < max; i++) {
++    acquire(&wait_lock);    // to access parent
++    acquire(&proc[i].lock); // to access PID and state
++    if (&proc[i].state != UNUSED) {
++      rpTable[count].pid = proc[i].pid;
++      memmove(rpTable[count].name, proc[i].name, 16);
++      rpTable[count].state = proc[i].state;
++      rpTable[count].memsize = proc[i].sz;
++      if (proc[i].parent != 0)
++        rpTable[count].ppid = proc[i].parent->pid;
++      else
++        rpTable[count].ppid = 0;
++      count++;
++    }
++    release(&proc[i].lock);
++    release(&wait_lock);
++  }
++  return count;
++}
++uint64 getnproc(void)
++{
++  struct proc *p;
++  uint64 active_processes = 0;
++
++  // Duyet qua mang toan cuc proc chua tat ca cac tien trinh
++  for(p = proc; p < &proc[NPROC]; p++){
++    
++    // Dung acquire moi lan truy cap de khoa, dam bao tinh an toan du lieu
++    acquire(&p->lock); 
++    
++    // Dem so tien trinh dang hoat dong (neu khong o trang thai UNUSED thi tang so count len)
++    if(p->state != UNUSED) {
++      active_processes++;
++    }
++    
++    // Release sau khi acquire
++    release(&p->lock); 
++  }
++
++  // Tra ve so tien trinh dang hoat dong
++  return active_processes; 
++}
+\ No newline at end of file
+diff --git a/xv6-labs-2024/kernel/proc.h b/xv6-labs-2024/kernel/proc.h
+index d021857..8ec85b5 100644
+--- a/xv6-labs-2024/kernel/proc.h
++++ b/xv6-labs-2024/kernel/proc.h
+@@ -104,4 +104,6 @@ struct proc {
+   struct file *ofile[NOFILE];  // Open files
+   struct inode *cwd;           // Current directory
+   char name[16];               // Process name (debugging)
++
++  int mask;
+ };
+diff --git a/xv6-labs-2024/kernel/ptree.h b/xv6-labs-2024/kernel/ptree.h
+new file mode 100644
+index 0000000..43fa1c4
+--- /dev/null
++++ b/xv6-labs-2024/kernel/ptree.h
+@@ -0,0 +1,9 @@
++#include "kernel/types.h"
++
++struct ptreeinfo {
++    int pid;
++    int ppid;
++    int state;
++    uint64 memsize;
++    char name[16];
++};
+\ No newline at end of file
+diff --git a/xv6-labs-2024/kernel/syscall.c b/xv6-labs-2024/kernel/syscall.c
+index ed65409..f2836bf 100644
+--- a/xv6-labs-2024/kernel/syscall.c
++++ b/xv6-labs-2024/kernel/syscall.c
+@@ -101,7 +101,9 @@ extern uint64 sys_unlink(void);
+ extern uint64 sys_link(void);
+ extern uint64 sys_mkdir(void);
+ extern uint64 sys_close(void);
+-
++extern uint64 sys_ptree(void);
++extern uint64 sys_trace(void);
++extern uint64 sys_sysinfo(void);
+ // An array mapping syscall numbers from syscall.h
+ // to the function that handles the system call.
+ static uint64 (*syscalls[])(void) = {
+@@ -126,6 +128,36 @@ static uint64 (*syscalls[])(void) = {
+ [SYS_link]    sys_link,
+ [SYS_mkdir]   sys_mkdir,
+ [SYS_close]   sys_close,
++[SYS_ptree]   sys_ptree,
++[SYS_trace]   sys_trace,
++[SYS_sysinfo] sys_sysinfo,
++};
++
++static char *syscall_names[] = {
++[SYS_fork]    "fork",
++[SYS_exit]    "exit",
++[SYS_wait]    "wait",
++[SYS_pipe]    "pipe",
++[SYS_read]    "read",
++[SYS_kill]    "kill",
++[SYS_exec]    "exec",
++[SYS_fstat]   "fstat",
++[SYS_chdir]   "chdir",
++[SYS_dup]     "dup",
++[SYS_getpid]  "getpid",
++[SYS_sbrk]    "sbrk",
++[SYS_sleep]   "sleep",
++[SYS_uptime]  "uptime",
++[SYS_open]    "open",
++[SYS_write]   "write",
++[SYS_mknod]   "mknod",
++[SYS_unlink]  "unlink",
++[SYS_link]    "link",
++[SYS_mkdir]   "mkdir",
++[SYS_close]   "close",
++[SYS_trace]   "trace",
++[SYS_sysinfo] "sysinfo",
++[SYS_ptree]   "sys_ptree",
+ };
+ 
+ void
+@@ -139,6 +171,13 @@ syscall(void)
+     // Use num to lookup the system call function for num, call it,
+     // and store its return value in p->trapframe->a0
+     p->trapframe->a0 = syscalls[num]();
++
++     if (p->mask & (1 << num)) {
++        // In ra format: pid: syscall tên_syscall -> kết_quả
++        printf("%d: syscall %s -> %d\n", p->pid, syscall_names[num], (int)p->trapframe->a0);
++    }
++
++
+   } else {
+     printf("%d %s: unknown sys call %d\n",
+             p->pid, p->name, num);
+diff --git a/xv6-labs-2024/kernel/syscall.h b/xv6-labs-2024/kernel/syscall.h
+index bc5f356..22782c7 100644
+--- a/xv6-labs-2024/kernel/syscall.h
++++ b/xv6-labs-2024/kernel/syscall.h
+@@ -20,3 +20,6 @@
+ #define SYS_link   19
+ #define SYS_mkdir  20
+ #define SYS_close  21
++#define SYS_trace  22
++#define SYS_sysinfo 23
++#define SYS_ptree  24
+\ No newline at end of file
+diff --git a/xv6-labs-2024/kernel/sysinfo.h b/xv6-labs-2024/kernel/sysinfo.h
+new file mode 100644
+index 0000000..9573f45
+--- /dev/null
++++ b/xv6-labs-2024/kernel/sysinfo.h
+@@ -0,0 +1,6 @@
++#include "types.h"
++
++struct sysinfo {
++  uint64 freemem;   // So luong bo nho trong (tinh bang byte)
++  uint64 nproc;     // So luong tien trinh dang hoat dong
++};
+\ No newline at end of file
+diff --git a/xv6-labs-2024/kernel/sysproc.c b/xv6-labs-2024/kernel/sysproc.c
+index 3b4d5bd..dfe3bb2 100644
+--- a/xv6-labs-2024/kernel/sysproc.c
++++ b/xv6-labs-2024/kernel/sysproc.c
+@@ -5,6 +5,8 @@
+ #include "memlayout.h"
+ #include "spinlock.h"
+ #include "proc.h"
++#include "ptree.h"
++#include "sysinfo.h"
+ 
+ uint64
+ sys_exit(void)
+@@ -91,3 +93,61 @@ sys_uptime(void)
+   release(&tickslock);
+   return xticks;
+ }
++
++uint64
++sys_ptree(void)
++{
++  // Get 'max' argument
++  int max;
++  argint(1, &max);
++
++  if (max <= 0)
++    return -1;
++
++  // Get address of buffer argument
++  uint64 bufAddr;
++  argaddr(0, &bufAddr);
++
++  // Kernel-side buffer to store tree info
++  struct ptreeinfo *kernelBuf = kalloc();
++  
++  // Getting the list of running processes from the process table
++  int parseAmount = parse_running_processes(kernelBuf, max);
++  if (parseAmount > max)
++    return -1;
++
++  // Copy kernel-side buffer to user space buffer argument
++  struct proc *curProc = myproc();
++  if (copyout(curProc->pagetable, bufAddr, (char*)kernelBuf, max * sizeof(struct ptreeinfo)) != 0)
++    return -1;
++
++  kfree(kernelBuf);
++  return 0;
++}
++uint64
++sys_trace(void)
++{
++  int mask;
++
++  argint(0, &mask);
++  myproc()->mask = mask;
++  return 0;
++}
++uint64
++sys_sysinfo(void)
++{
++  uint64 info_addr; // Dia chi pointer struct info ma user truyen vao
++  struct sysinfo info; // Bien luu tru tam thoi trong kernel
++  
++  // Lay pointer tro toi struct proc cua tien trinh hien tai dang chay
++  struct proc *p = myproc(); 
++  argaddr(0, &info_addr);
++
++  info.freemem = getfreemem();
++  info.nproc = getnproc();
++
++  if(copyout(p->pagetable, info_addr, (char *)&info, sizeof(info)) < 0)
++    return -1;
++
++  return 0;
++}
+diff --git a/xv6-labs-2024/user/pstree.c b/xv6-labs-2024/user/pstree.c
+new file mode 100644
+index 0000000..05cd4f8
+--- /dev/null
++++ b/xv6-labs-2024/user/pstree.c
+@@ -0,0 +1,43 @@
++#include "kernel/types.h"
++#include "user/user.h"
++
++void printIndent(const int level) {
++    if (level < 1)
++        return;
++    for (int i = 1; i <= level; i++)
++        printf("   ");
++}
++
++void printPTree(struct ptreeinfo *buf, struct ptreeinfo prcs, const int max, const int level, const int maxLevel) {
++    // Stop when reaching max depth or if entry is empty
++    if (level > maxLevel || prcs.pid == 0)
++        return;
++    
++    // Print entry
++    printf("pid=%d name=%s state=%d mem=%u\n", prcs.pid, prcs.name, prcs.state, (int)prcs.memsize);
++    
++    // Find children and recursion
++    for (int i = 0; i < max; i++) {
++        if (buf[i].ppid == prcs.pid) {
++            printIndent(level + 1);
++            printPTree(buf, buf[i], max, level + 1, maxLevel);
++            buf[i].pid = 0;     // Mark child process as empty after recursive iteration to avoid repeating
++        }
++    }
++}
++
++int main() {
++    int max = 64;
++    struct ptreeinfo *buffer = malloc(sizeof(struct ptreeinfo) * max);
++    int res = ptree(buffer, max);
++    if (res != 0) {
++        printf("An error occurred while parsing processes.\n");
++        exit(res);
++    }
++    for (int i = 0; i < max; i++) {
++        printPTree(buffer, buffer[i], max, 0, 64);
++    }
++
++    free(buffer);
++    exit(0);
++}
+\ No newline at end of file
+diff --git a/xv6-labs-2024/user/sysinfotest.c b/xv6-labs-2024/user/sysinfotest.c
+new file mode 100644
+index 0000000..bc55411
+--- /dev/null
++++ b/xv6-labs-2024/user/sysinfotest.c
+@@ -0,0 +1,44 @@
++#include "kernel/param.h"
++#include "kernel/types.h"
++#include "kernel/sysinfo.h"
++#include "user/user.h"
++
++void print_info(struct sysinfo *info, char *stage) {
++    if (sysinfo(info) < 0) {
++        printf("sysinfo call failed at %s!\n", stage);
++        exit(1);
++    }
++    printf("--- %s ---\n", stage);
++    printf("Free memory: %d bytes\n", (int)info->freemem);
++    printf("Active processes: %d\n\n", (int)info->nproc);
++}
++
++int main(int argc, char *argv[]) {
++    struct sysinfo info;
++
++    print_info(&info, "1. Normal State (Baseline)");
++
++    int pid = fork();
++    
++    if (pid < 0) {
++        printf("Fork failed!\n");
++        exit(1);
++    } 
++    else if (pid == 0) {
++        // De tien trinh con sleep 10 tick de tien trinh cha kip thoi do duoc
++        sleep(10);
++        exit(0);
++    } 
++    else {
++        // De tien trinh cha sleep 2 tick, doi mot xiu de OS setup xong tien trinh con de do luong
++        sleep(2);
++        print_info(&info, "2. After Fork (Child is alive)");
++
++        wait(0);
++        
++        print_info(&info, "3. After Child Exit & Wait");
++
++        printf("sysinfotest: OK\n");
++        exit(0);
++    }
++}
+\ No newline at end of file
+diff --git a/xv6-labs-2024/user/trace.c b/xv6-labs-2024/user/trace.c
+new file mode 100644
+index 0000000..b43e17a
+--- /dev/null
++++ b/xv6-labs-2024/user/trace.c
+@@ -0,0 +1,41 @@
++﻿#include "kernel/types.h"
++#include "user/user.h"
++#include "kernel/stat.h"
++#include "kernel/param.h"
++
++int main(int argc, char *argv[])
++{
++  int i;
++  char *nargv[MAXARG];
++
++  // Kiểm tra xem người dùng có nhập đủ cú pháp không
++  // Cú pháp đúng: trace <mask> <command> [args...]
++  if(argc < 3 || (argv[1][0] < '0' || argv[1][0] > '9')){
++    fprintf(2, "Usage: %s mask command\n", argv[0]);
++    exit(1);
++  }
++
++  
++  
++  // Gọi system call trace()  trong kernel.
++  if (trace(atoi(argv[1])) < 0) {
++    fprintf(2, "%s: trace failed\n", argv[0]);
++    exit(1);
++  }
++
++  // Chuẩn bị mảng đối số  cho lệnh cần chạy tiếp theo
++  // Bỏ qua argv[0] ("trace") và argv[1] ("mask")
++  for(i = 2; i < argc && i < MAXARG; i++){
++    nargv[i-2] = argv[i];
++  }
++  nargv[i-2] = 0; // Đánh dấu kết thúc mảng bằng NULL
++
++  
++  // Lệnh exec() sẽ thay thế chương trình trace hiện tại bằng chương trình mới
++
++  exec(nargv[0], nargv);
++
++  // lệnh lỗi nếu exec() trả về và in ra lỗi
++  printf("exec %s failed\n", nargv[0]);
++  exit(1);
++}
+\ No newline at end of file
+diff --git a/xv6-labs-2024/user/user.h b/xv6-labs-2024/user/user.h
+index f16fe27..16c0860 100644
+--- a/xv6-labs-2024/user/user.h
++++ b/xv6-labs-2024/user/user.h
+@@ -1,4 +1,6 @@
++#include "kernel/ptree.h"
+ struct stat;
++struct ptreeinfo;
+ 
+ // system calls
+ int fork(void);
+@@ -23,6 +25,8 @@ char* sbrk(int);
+ int sleep(int);
+ int uptime(void);
+ 
++int ptree(struct ptreeinfo*, int max);
++int trace(int);//
+ // ulib.c
+ int stat(const char*, struct stat*);
+ char* strcpy(char*, const char*);
+@@ -41,3 +45,7 @@ void *memcpy(void *, const void *, uint);
+ // umalloc.c
+ void* malloc(uint);
+ void free(void*);
++
++// sysinfo
++struct sysinfo;
++int sysinfo(struct sysinfo *);
+\ No newline at end of file
+diff --git a/xv6-labs-2024/user/usys.pl b/xv6-labs-2024/user/usys.pl
+index 01e426e..c09c93a 100644
+--- a/xv6-labs-2024/user/usys.pl
++++ b/xv6-labs-2024/user/usys.pl
+@@ -36,3 +36,6 @@ entry("getpid");
+ entry("sbrk");
+ entry("sleep");
+ entry("uptime");
++entry("ptree");
++entry("trace");
++entry("sysinfo");

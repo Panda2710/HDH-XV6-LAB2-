@@ -6,6 +6,7 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "ptree.h"
+#include "sysinfo.h"
 
 uint64
 sys_exit(void)
@@ -121,5 +122,32 @@ sys_ptree(void)
     return -1;
 
   kfree(kernelBuf);
+  return 0;
+}
+uint64
+sys_trace(void)
+{
+  int mask;
+
+  argint(0, &mask);
+  myproc()->mask = mask;
+  return 0;
+}
+uint64
+sys_sysinfo(void)
+{
+  uint64 info_addr; // Dia chi pointer struct info ma user truyen vao
+  struct sysinfo info; // Bien luu tru tam thoi trong kernel
+  
+  // Lay pointer tro toi struct proc cua tien trinh hien tai dang chay
+  struct proc *p = myproc(); 
+  argaddr(0, &info_addr);
+
+  info.freemem = getfreemem();
+  info.nproc = getnproc();
+
+  if(copyout(p->pagetable, info_addr, (char *)&info, sizeof(info)) < 0)
+    return -1;
+
   return 0;
 }

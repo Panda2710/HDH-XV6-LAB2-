@@ -93,6 +93,15 @@ sys_uptime(void)
   return xticks;
 }
 
+uint64
+sys_trace(void)
+{
+  int mask;
+
+  argint(0, &mask);
+  myproc()->mask = mask;
+  return 0;
+}
 uint64 sys_sysinfo(void)
 {
   uint64 info_addr; // Dia chi pointer struct info ma user truyen vao

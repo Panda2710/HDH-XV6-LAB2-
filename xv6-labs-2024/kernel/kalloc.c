@@ -80,3 +80,25 @@ kalloc(void)
     memset((char*)r, 5, PGSIZE); // fill with junk
   return (void*)r;
 }
+
+uint64 getfreemem(void)
+{
+  struct run *r;
+  uint64 free_bytes = 0;
+
+  acquire(&kmem.lock); // Dung ham acquire() de lay Spinlock (khoa)
+  // Ngan cac CPU khac thay doi danh sach kmem.freelist trong khi ta dang doc no
+
+  r = kmem.freelist;
+  
+  // Duyyet qua linked list cac trang trong
+  while(r){
+    free_bytes += PGSIZE; // PGSIZE la dinh nghia kthuoc cua 1 trang
+    r = r->next;
+  }
+  
+  // Release de mo khoa spinlock sau khi doc xong du lieu
+  release(&kmem.lock); 
+
+  return free_bytes; 
+}

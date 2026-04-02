@@ -1,7 +1,4 @@
 
-# To compile and run with a lab solution, set the lab name in conf/lab.mk
-# (e.g., LAB=util).  Run make grade to test solution with the lab's
-# grade script (e.g., grade-lab-util).
 
 -include conf/lab.mk
 
@@ -195,7 +192,6 @@ UPROGS=\
 	$U/_wc\
 	$U/_zombie\
 	$U/_trace\
-
 	$U/_sysinfotest\
 
 

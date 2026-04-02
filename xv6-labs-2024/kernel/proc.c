@@ -5,6 +5,7 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "ptree.h"
 
 struct cpu cpus[NCPU];
 
@@ -695,13 +696,20 @@ procdump(void)
 }
 
 // Parses running processes from ptable into a new table
-uint64 parse_running_processes(struct proc *rpTable) {
+uint64 parse_running_processes(struct ptreeinfo *rpTable, int max) {
   uint64 count = 0;
-  for (int i = 0; i < NPROC; i++) {
+  for (int i = 0; i < max; i++) {
     acquire(&wait_lock);    // to access parent
     acquire(&proc[i].lock); // to access PID and state
     if (&proc[i].state != UNUSED) {
-      rpTable[i] = proc[i];
+      rpTable[count].pid = proc[i].pid;
+      memmove(rpTable[count].name, proc[i].name, 16);
+      rpTable[count].state = proc[i].state;
+      rpTable[count].memsize = proc[i].sz;
+      if (proc[i].parent != 0)
+        rpTable[count].ppid = proc[i].parent->pid;
+      else
+        rpTable[count].ppid = 0;
       count++;
     }
     release(&proc[i].lock);

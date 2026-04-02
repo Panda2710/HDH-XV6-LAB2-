@@ -108,29 +108,18 @@ sys_ptree(void)
   argaddr(0, &bufAddr);
 
   // Kernel-side buffer to store tree info
-  struct ptreeinfo kernelBuf[64];
+  struct ptreeinfo *kernelBuf = kalloc();
   
   // Getting the list of running processes from the process table
-  struct proc *rpTable = kalloc();
-  parse_running_processes(rpTable);
-  // if (parseAmount > max)
-  //   return -1;
-  
-  // Transfer attributes from list to kernel-side buffer
-  for (int i = 0; i < max; i++) {
-    kernelBuf[i].pid = rpTable[i].pid;
-    memmove(kernelBuf[i].name, rpTable[i].name, 16);
-    kernelBuf[i].state = rpTable[i].state;
-    kernelBuf[i].memsize = rpTable[i].sz;
-    if (rpTable[i].parent != 0)
-      kernelBuf[i].ppid = rpTable[i].parent->pid;
-  }
+  int parseAmount = parse_running_processes(kernelBuf, max);
+  if (parseAmount > max)
+    return -1;
 
   // Copy kernel-side buffer to user space buffer argument
   struct proc *curProc = myproc();
-  if (copyout(curProc->pagetable, bufAddr, (char*)kernelBuf, sizeof(kernelBuf)) != 0)
+  if (copyout(curProc->pagetable, bufAddr, (char*)kernelBuf, max * sizeof(struct ptreeinfo)) != 0)
     return -1;
 
-  kfree(rpTable);
+  kfree(kernelBuf);
   return 0;
 }

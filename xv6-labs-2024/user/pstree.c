@@ -8,26 +8,36 @@ void printIndent(const int level) {
         printf("   ");
 }
 
-void printPTree(struct ptreeinfo *buf, struct ptreeinfo prcs, const int level, const int maxLevel) {
+void printPTree(struct ptreeinfo *buf, struct ptreeinfo prcs, const int max, const int level, const int maxLevel) {
+    // Stop when reaching max depth or if entry is empty
     if (level > maxLevel || prcs.pid == 0)
         return;
-    printf("%d %s state=%d mem=%u\n", prcs.pid, prcs.name, prcs.state, (int)prcs.memsize);
     
-    for (int i = 0; i < 10; i++) {
+    // Print entry
+    printf("pid=%d name=%s state=%d mem=%u\n", prcs.pid, prcs.name, prcs.state, (int)prcs.memsize);
+    
+    // Find children and recursion
+    for (int i = 0; i < max; i++) {
         if (buf[i].ppid == prcs.pid) {
             printIndent(level + 1);
-            printPTree(buf, buf[i], level + 1, maxLevel);
-            buf[i].pid = 0;
+            printPTree(buf, buf[i], max, level + 1, maxLevel);
+            buf[i].pid = 0;     // Mark child process as empty after recursive iteration to avoid repeating
         }
     }
 }
 
 int main() {
-    struct ptreeinfo buffer[10];
-    int res = ptree(buffer, 10);
-    for (int i = 0; i < 10; i++) {
-        printPTree(buffer, buffer[i], 0, 96);
+    int max = 64;
+    struct ptreeinfo *buffer = malloc(sizeof(struct ptreeinfo) * max);
+    int res = ptree(buffer, max);
+    if (res != 0) {
+        printf("An error occurred while parsing processes.\n");
+        exit(res);
+    }
+    for (int i = 0; i < max; i++) {
+        printPTree(buffer, buffer[i], max, 0, 64);
     }
 
-    return res;
+    free(buffer);
+    exit(0);
 }

@@ -5,6 +5,7 @@
 #include "memlayout.h"
 #include "spinlock.h"
 #include "proc.h"
+#include "ptree.h"
 #include "sysinfo.h"
 
 uint64
@@ -94,6 +95,36 @@ sys_uptime(void)
 }
 
 uint64
+sys_ptree(void)
+{
+  // Get 'max' argument
+  int max;
+  argint(1, &max);
+
+  if (max <= 0)
+    return -1;
+
+  // Get address of buffer argument
+  uint64 bufAddr;
+  argaddr(0, &bufAddr);
+
+  // Kernel-side buffer to store tree info
+  struct ptreeinfo *kernelBuf = kalloc();
+  
+  // Getting the list of running processes from the process table
+  int parseAmount = parse_running_processes(kernelBuf, max);
+  if (parseAmount > max)
+    return -1;
+
+  // Copy kernel-side buffer to user space buffer argument
+  struct proc *curProc = myproc();
+  if (copyout(curProc->pagetable, bufAddr, (char*)kernelBuf, max * sizeof(struct ptreeinfo)) != 0)
+    return -1;
+
+  kfree(kernelBuf);
+  return 0;
+}
+uint64
 sys_trace(void)
 {
   int mask;
@@ -102,7 +133,8 @@ sys_trace(void)
   myproc()->mask = mask;
   return 0;
 }
-uint64 sys_sysinfo(void)
+uint64
+sys_sysinfo(void)
 {
   uint64 info_addr; // Dia chi pointer struct info ma user truyen vao
   struct sysinfo info; // Bien luu tru tam thoi trong kernel
